@@ -37,6 +37,8 @@
 /* Function prototyping section */
 static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+int mcp794xx_open(struct inode *inode, struct file *filp);
+int mcp794xx_release(struct inode *inode, struct file *filp);
 
 struct mcp794xx {
 	//enum ds_type	type;
@@ -48,6 +50,7 @@ struct mcp794xx {
 	const char	*name;
 	struct rtc_device *rtc;
 	struct cdev cdev;
+	int current_pointer;
 #ifdef CONFIG_COMMON_CLK
 	struct clk_hw	clks[2];
 #endif
@@ -79,20 +82,18 @@ struct file_operations mcp794xx_fops = {
 	.owner = THIS_MODULE,
 	.read = mcp794xx_read_alarm,
 	.write = mcp794xx_set_alarm,
-	//.open = mcp794xx_open,
-	//.close = mcp794xx_close,
+	.open = mcp794xx_open,
+	.release = mcp794xx_release,
 		
 };
 static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct mcp794xx	*mcp794xx;
 	int err = -ENODEV;
-	int tmp;
-	bool want_irq;
-	bool mcp794xx_can_wakeup_device = false;
-	unsigned char	regs[8];
-	struct mcp794xx_platform_data *pdata = dev_get_platdata(&client->dev);
-	u8 trickle_charger_setup = 0;
+	//bool want_irq;
+	//bool mcp794xx_can_wakeup_device = false;
+	//unsigned char regs[8];
+	
 
 	mcp794xx = devm_kzalloc(&client->dev, sizeof(struct mcp794xx), GFP_KERNEL);
 	if (mcp794xx == NULL)
@@ -107,22 +108,56 @@ static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id 
 		dev_err(mcp794xx->dev, "regmap allocation failed\n");
 		return PTR_ERR(mcp794xx->regmap);
 	}
-
 	cdev_init(&mcp794xx->cdev, &mcp794xx_fops);
 	i2c_set_clientdata(client, mcp794xx);
+	err = rtc_register_device(mcp794xx->rtc);
+	if(err)
+		return err;
 
 	return 0;	
 }
 
+/* Called when the device node is closed */
+int mcp794xx_release(struct inode *inode, struct file *filp)
+{
+	/* Dummy function no cleanup to be done */
+	printk(KERN_INFO "device node closed\n");
+	
+	return 0;
+}
+/* Called when device is opened for the first time */
+int mcp794xx_open(struct inode *inode, struct file *filp)
+{
+	struct mcp794xx *dev = NULL;
+	dev = container_of(inode->i_cdev, struct mcp794xx, cdev);
+	if (dev == NULL) {
+		pr_err("Container of didn't find any valid data \n");
+		return -ENODEV;
+	}
+
+	dev->current_pointer = 0;
+
+	filp->private_data = dev;
+	
+	if(inode->i_cdev != &dev->cdev) {
+
+		pr_err("Device open: internal error\n");
+		return -ENODEV;
+	}
+	dev = (struct mcp794xx *) devm_kzalloc(dev->dev, sizeof(struct mcp794xx *), GFP_KERNEL);
+	if(dev == NULL) {
+		pr_err("Error allocating memory \n");
+		return -ENOMEM;
+	}
+	return 0;
+}
 ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-	struct device *dev;
+	struct device *dev = NULL;
 	struct rtc_wkalrm *t;
-	char *buff;
 	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
-	u8 ald[3], ctl[3];
 	u8 regs[10];
-	int wday, ret;
+	int wday = 0, ret;
 
 	//buffer = devm_kzalloc(mcp794xx->dev, 10*sizeof(char *), GFP_KERNEL);
 
@@ -215,7 +250,7 @@ static struct i2c_driver mcp794xx_driver = {
 	},
 	.probe = mcp794xx_probe,
 	.id_table = mcp794xx_id,
-	//.remove = mcp794xx_remove,
+	
 };
 
 module_i2c_driver(mcp794xx_driver);
