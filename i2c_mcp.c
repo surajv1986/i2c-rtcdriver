@@ -34,8 +34,9 @@
 #define MCP794XX_MSK_ALMX_MATCH	(MCP794XX_BIT_ALMX_C0 | \
 					 MCP794XX_BIT_ALMX_C1 | \
 					 MCP794XX_BIT_ALMX_C2)
-
+/* Function prototyping section */
 static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 
 struct mcp794xx {
 	//enum ds_type	type;
@@ -77,7 +78,9 @@ struct file_operations mcp794xx_fops = {
 	
 	.owner = THIS_MODULE,
 	.read = mcp794xx_read_alarm,
-	//.write = mcp794xx_write_alarm,
+	.write = mcp794xx_set_alarm,
+	//.open = mcp794xx_open,
+	//.close = mcp794xx_close,
 		
 };
 static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id *id)
@@ -109,6 +112,55 @@ static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id 
 	i2c_set_clientdata(client, mcp794xx);
 
 	return 0;	
+}
+
+ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
+{
+	struct device *dev;
+	struct rtc_wkalrm *t;
+	char *buff;
+	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
+	u8 ald[3], ctl[3];
+	u8 regs[10];
+	int wday, ret;
+
+	//buffer = devm_kzalloc(mcp794xx->dev, 10*sizeof(char *), GFP_KERNEL);
+
+	/* Use sysfs here */
+	dev_dbg(dev, "%s, sec=%d min=%d hour=%d wday=%d mday=%d mon=%d "
+		"enabled=%d pending=%d\n", __func__,
+		t->time.tm_sec, t->time.tm_min, t->time.tm_hour,
+		t->time.tm_wday, t->time.tm_mday, t->time.tm_mon,
+		t->enabled, t->pending);
+	
+	/* Read control registers */
+	ret = regmap_bulk_read(mcp794xx->regmap, MCP794XX_REG_CONTROL, regs, sizeof(regs));
+
+	if (ret)
+		return ret;
+
+	/* Set alarm 0, using 24-hour and day-of-month modes. */
+	regs[3] = bin2bcd(t->time.tm_sec);
+	regs[4] = bin2bcd(t->time.tm_min);
+	regs[5] = bin2bcd(t->time.tm_hour);
+	regs[6] = wday;
+	regs[7] = bin2bcd(t->time.tm_mday);
+	regs[8] = bin2bcd(t->time.tm_mon + 1);
+
+	/* Clear the alarm 0 interrupt flag. */
+	regs[6] &= ~MCP794XX_BIT_ALMX_IF;
+	/* Set alarm match: second, minute, hour, day, date, month. */
+	regs[6] |= MCP794XX_MSK_ALMX_MATCH;
+	/* Disable interrupt. We will not enable until completely programmed */
+	regs[0] &= ~MCP794XX_BIT_ALM0_EN;
+
+	/* write the values to set to the control register */
+	ret = regmap_bulk_write(mcp794xx->regmap, MCP794XX_REG_CONTROL, regs,
+				sizeof(regs));
+	if (ret < 0)
+		return -EIO;
+	
+	return ret;
 }
 static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
