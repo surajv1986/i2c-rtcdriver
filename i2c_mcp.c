@@ -17,21 +17,25 @@
 #include <linux/gpio.h>
 #include <linux/workqueue.h>
 
-#define MCP794XX_REG_CONTROL		0x07
-#define MCP794XX_BIT_ALM0_EN	0x10
-#define MCP794XX_BIT_ALM1_EN	0x20
-#define MCP794XX_REG_ALARM0_BASE	0x0a
-#define MCP794XX_REG_ALARM0_CTRL	0x0d
-#define MCP794XX_REG_ALARM1_BASE	0x11
-#define MCP794XX_REG_ALARM1_CTRL	0x14
-#define MCP794XX_BIT_ALMX_IF	BIT(3)
-#define MCP794XX_BIT_ALMX_C0	BIT(4)
-#define MCP794XX_BIT_ALMX_C1	BIT(5)
-#define MCP794XX_BIT_ALMX_C2	BIT(6)
-#define MCP794XX_BIT_ALMX_POL	BIT(7)
+#define DS1307_REG_WDAY 0x03
+#define MCP794xx_BIT_VBATEN 0x08
+#define MCP794XX_REG_CONTROL 0x07
+#define MCP794XX_BIT_ALM0_EN 0x10
+#define MCP794XX_BIT_ALM1_EN 0x20
+#define MCP794XX_REG_ALARM0_BASE 0x0a
+#define MCP794XX_REG_ALARM0_CTRL 0x0d
+#define MCP794XX_REG_ALARM1_BASE 0x11
+#define MCP794XX_REG_ALARM1_CTRL 0x14
+#define MCP794XX_BIT_ALMX_IF BIT(3)
+#define MCP794XX_BIT_ALMX_C0 BIT(4)
+#define MCP794XX_BIT_ALMX_C1 BIT(5)
+#define MCP794XX_BIT_ALMX_C2 BIT(6)
+#define MCP794XX_BIT_ALMX_POL BIT(7)
 #define MCP794XX_MSK_ALMX_MATCH	(MCP794XX_BIT_ALMX_C0 | \
 					 MCP794XX_BIT_ALMX_C1 | \
 					 MCP794XX_BIT_ALMX_C2)
+
+static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 
 struct mcp794xx {
 	//enum ds_type	type;
@@ -42,6 +46,7 @@ struct mcp794xx {
 	struct regmap	*regmap;
 	const char	*name;
 	struct rtc_device *rtc;
+	struct cdev cdev;
 #ifdef CONFIG_COMMON_CLK
 	struct clk_hw	clks[2];
 #endif
@@ -64,19 +69,22 @@ struct chip_desc {
 						    bool);
 };
 
-
-
 static const struct regmap_config regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 };
-
+struct file_operations mcp794xx_fops = {
+	
+	.owner = THIS_MODULE,
+	.read = mcp794xx_read_alarm,
+	//.write = mcp794xx_write_alarm,
+		
+};
 static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct mcp794xx	*mcp794xx;
 	int err = -ENODEV;
 	int tmp;
-	const struct chip_desc	*chip;
 	bool want_irq;
 	bool mcp794xx_can_wakeup_device = false;
 	unsigned char	regs[8];
@@ -97,9 +105,32 @@ static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id 
 		return PTR_ERR(mcp794xx->regmap);
 	}
 
+	cdev_init(&mcp794xx->cdev, &mcp794xx_fops);
 	i2c_set_clientdata(client, mcp794xx);
 
 	return 0;	
+}
+static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
+{
+	struct device *dev = NULL;
+	//struct rtc_wkalrm *t;
+	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
+	/* used to Store read values from registers */
+	buf = devm_kzalloc(mcp794xx->dev, 10*sizeof(char *), GFP_KERNEL);
+	u8 regs[10];
+	int ret;
+
+	ret = regmap_bulk_read(mcp794xx->regmap, MCP794XX_REG_CONTROL, regs, sizeof(regs));
+	
+	if(ret)
+		return ret;
+	
+	if (copy_to_user(buf, regs, 10) != 0) {
+
+		return -EIO;
+	}
+	
+	return 0;
 }
 static const struct i2c_device_id mcp794xx_id[] = {
 
@@ -107,7 +138,7 @@ static const struct i2c_device_id mcp794xx_id[] = {
 	{},
 };
 
-//MODULE_DEVICE_TABLE(i2c, 12);
+MODULE_DEVICE_TABLE(i2c, mcp794xx_id);
 
 
 #ifdef CONFIG_OF
