@@ -154,7 +154,7 @@ int mcp794xx_open(struct inode *inode, struct file *filp)
 ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	struct device *dev = NULL;
-	struct rtc_wkalrm *t;
+	struct rtc_wkalrm *t = NULL;
 	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
 	u8 regs[10];
 	int wday = 0, ret;
@@ -201,11 +201,13 @@ static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count
 {
 	struct device *dev = NULL;
 	//struct rtc_wkalrm *t;
+	u8 regs[10];
+	int ret;
+
 	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
 	/* used to Store read values from registers */
 	buf = devm_kzalloc(mcp794xx->dev, 10*sizeof(char *), GFP_KERNEL);
-	u8 regs[10];
-	int ret;
+	
 
 	ret = regmap_bulk_read(mcp794xx->regmap, MCP794XX_REG_CONTROL, regs, sizeof(regs));
 	
