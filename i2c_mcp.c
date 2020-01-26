@@ -46,7 +46,6 @@
 static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 int mcp794xx_open(struct inode *inode, struct file *filp);
-int mcp794xx_release(struct inode *inode, struct file *filp);
 void i2c_do_tasklet(struct work_struct *work);
 
 
@@ -102,7 +101,7 @@ struct file_operations mcp794xx_fops = {
 	.read = mcp794xx_read_alarm,
 	.write = mcp794xx_set_alarm,
 	.open = mcp794xx_open,
-	.release = mcp794xx_release,
+	
 		
 };
 static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id *id)
@@ -166,14 +165,17 @@ fail:
 	return err;	
 }
 
-/* Called when the device node is closed */
-int mcp794xx_release(struct inode *inode, struct file *filp)
+
+static int mcp794xx_remove(struct i2c_client *client)
 {
-	/* Dummy function no cleanup to be done */
-	printk(KERN_INFO "device node closed\n");
-	
+	/* free created device */
+	device_destroy(c1, MKDEV(mcp_major, 1));
+	/* free created class */
+	class_destroy(c1);
 	return 0;
 }
+
+
 /* Called when device is opened for the first time */
 int mcp794xx_open(struct inode *inode, struct file *filp)
 {
@@ -356,6 +358,7 @@ static struct i2c_driver mcp794xx_driver = {
 		//.acpi_match_table = ACPI_PTR(mcp794xx_acpi_ids),
 	},
 	.probe = mcp794xx_probe,
+	.remove = mcp794xx_remove,
 	.id_table = mcp794xx_id,
 	
 };
