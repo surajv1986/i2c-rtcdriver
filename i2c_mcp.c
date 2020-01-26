@@ -15,7 +15,10 @@
 #include <linux/regmap.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
+#include <linux/interrupt.h>
+#include <linux/gpio.h>
 #include <linux/workqueue.h>
+
 
 #define DS1307_REG_WDAY 0x03
 #define MCP794xx_BIT_VBATEN 0x08
@@ -34,11 +37,23 @@
 #define MCP794XX_MSK_ALMX_MATCH	(MCP794XX_BIT_ALMX_C0 | \
 					 MCP794XX_BIT_ALMX_C1 | \
 					 MCP794XX_BIT_ALMX_C2)
+/* Choose the interrupt pin as GPIO 19 i.e pin 35 on rpi 3 */
+#define GPIO_ANY_GPIO 19
+#define GPIO_ANY_GPIO_DESC "Some gpio pin description"
+#define GPIO_ANY_GPIO_DEVICE_DESC "some_device"
+
 /* Function prototyping section */
 static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 ssize_t mcp794xx_set_alarm(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 int mcp794xx_open(struct inode *inode, struct file *filp);
 int mcp794xx_release(struct inode *inode, struct file *filp);
+void i2c_do_tasklet(struct work_struct *work);
+
+
+/* Global Variables section */
+/* Interrupt Variable */
+short int irq_any_gpio;
+static struct work_struct i2c_wq;
 
 struct mcp794xx {
 	//enum ds_type	type;
@@ -109,10 +124,12 @@ static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id 
 		return PTR_ERR(mcp794xx->regmap);
 	}
 	cdev_init(&mcp794xx->cdev, &mcp794xx_fops);
-	i2c_set_clientdata(client, mcp794xx);
+	INIT_WORK(&i2c_wq, i2c_do_tasklet);
 	err = rtc_register_device(mcp794xx->rtc);
 	if(err)
 		return err;
+	i2c_set_clientdata(client, mcp794xx);
+	
 
 	return 0;	
 }
@@ -221,6 +238,62 @@ static int mcp794xx_read_alarm(struct file *filp, char __user *buf, size_t count
 	
 	return 0;
 }
+
+void i2c_do_tasklet(struct work_struct *work)
+{
+	struct device *dev = NULL;
+	//struct rtc_wkalrm *t;
+	u8 regs[10];
+	int ret;
+
+	struct mcp794xx *mcp794xx = dev_get_drvdata(dev);
+	/* read control register of rtc device */
+	ret = regmap_bulk_read(mcp794xx->regmap, MCP794XX_REG_CONTROL, regs, sizeof(regs));
+
+
+}
+
+
+/* Interrupt Handling section */
+/* IRQ handler - fired on GPIO 17 interrupt- Falling Edge */
+static irqreturn_t r_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
+{
+
+	/* Schedule the Bottom Half to be executed later */
+	schedule_work(&i2c_wq);
+	
+	/* Respond to the interrupt */
+	return IRQ_HANDLED;	
+}
+/* Module to configure interrupt */
+void r_int_config(void)
+{
+	if (gpio_request(GPIO_ANY_GPIO, GPIO_ANY_GPIO_DESC)) {
+		printk("GPIO request failure %s\n", GPIO_ANY_GPIO_DESC);
+		return;	
+	}
+	/* Obtain the irq number for our desired interrupt gpio pin */
+	if ( (irq_any_gpio = gpio_to_irq(GPIO_ANY_GPIO)) < 0) {
+		printk("GPIO to IRQ mapping failure %s\n", GPIO_ANY_GPIO_DESC);
+		return;
+	}	
+	
+	printk(KERN_NOTICE "Mapped int %d\n", irq_any_gpio);
+	/* Configure irq handler to Trigger on Falling Edge */	
+	if (request_irq(irq_any_gpio, (irq_handler_t) r_irq_handler, IRQF_TRIGGER_FALLING, GPIO_ANY_GPIO_DESC, GPIO_ANY_GPIO_DEVICE_DESC )) {
+		printk("Irq Request failure \n");
+		return;
+	}
+	return;	
+}
+/* Module to release interrupt resources configured */
+void r_int_release(void) 
+{
+	free_irq(irq_any_gpio, GPIO_ANY_GPIO_DEVICE_DESC);
+	gpio_free(GPIO_ANY_GPIO);
+	
+}
+
 static const struct i2c_device_id mcp794xx_id[] = {
 
 	{ "mcp7940x", 12 },
