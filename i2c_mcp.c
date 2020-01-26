@@ -51,6 +51,10 @@ void i2c_do_tasklet(struct work_struct *work);
 
 
 /* Global Variables section */
+/* class variable */
+static struct class *c1;
+static unsigned int mcp_major = 1;
+static unsigned int minor = 0;
 /* Interrupt Variable */
 short int irq_any_gpio;
 static struct work_struct i2c_wq;
@@ -104,7 +108,10 @@ struct file_operations mcp794xx_fops = {
 static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct mcp794xx	*mcp794xx;
+	struct device *device = NULL;
+	dev_t devno = 0;
 	int err = -ENODEV;
+	
 	//bool want_irq;
 	//bool mcp794xx_can_wakeup_device = false;
 	//unsigned char regs[8];
@@ -123,15 +130,40 @@ static int mcp794xx_probe(struct i2c_client *client, const struct i2c_device_id 
 		dev_err(mcp794xx->dev, "regmap allocation failed\n");
 		return PTR_ERR(mcp794xx->regmap);
 	}
+	mcp_major = MAJOR(devno);
+	/* Create device class */
+	c1 = class_create(THIS_MODULE, "mcp794xx");
+	if(IS_ERR(c1))
+	{
+		err = PTR_ERR(c1);		
+		goto fail;
+	}
+	
 	cdev_init(&mcp794xx->cdev, &mcp794xx_fops);
+	err = cdev_add(&mcp794xx->cdev, devno, 1);
+	if (err) {
+		pr_err("Error while trying to add %s\n", "MCP794xx");
+		goto fail;
+	}
+	/* Create device with NULL parent device and NULL child device */
+	device = device_create(c1, NULL, devno, NULL, "MCP794xx");
+	if(IS_ERR(device)) {
+		err = PTR_ERR(device);
+		pr_err("error while creating device %s", "MCP794xx");
+		cdev_del(&mcp794xx->cdev);
+		goto fail;
+	}
 	INIT_WORK(&i2c_wq, i2c_do_tasklet);
-	err = rtc_register_device(mcp794xx->rtc);
-	if(err)
-		return err;
+	
 	i2c_set_clientdata(client, mcp794xx);
 	
-
-	return 0;	
+	return 0;
+fail:
+	if (c1 != NULL) {
+		device_destroy(c1, MKDEV(mcp_major, minor));
+		class_destroy(c1);				
+	}
+	return err;	
 }
 
 /* Called when the device node is closed */
